@@ -1,0 +1,11 @@
+{
+  "api_base_url": "https://apiservice.yourmirror.io",
+  "timeout": 60,
+  "max_retries": 3,
+  "default_quality": "normal",
+  "auto_cleanup": true,
+  "user_agent": "ComfyUI-MirrorNode/1.0",
+  "supported_formats": ["JPG", "JPEG", "PNG", "WEBP", "AVIF", "BMP", "GIF", "TIFF", "ICO"],
+  "temp_file_prefix": "yourmirror_",
+  "exponential_backoff_base": 5
+} 
