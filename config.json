@@ -1,7 +1,7 @@
 {
   "api_base_url": "https://apiservice.yourmirror.io",
   "timeout": 60,
-  "max_retries": 3,
+  "max_retries": 1,
   "default_quality": "normal",
   "auto_cleanup": true,
   "user_agent": "ComfyUI-MirrorNode/1.0",
