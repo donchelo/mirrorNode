@@ -5,6 +5,8 @@
   "default_quality": "normal",
   "auto_cleanup": true,
   "user_agent": "ComfyUI-MirrorNode/1.0",
+  "high_quality_timeout": 180,
+  "download_timeout": 60,
   "supported_formats": ["JPG", "JPEG", "PNG", "WEBP", "AVIF", "BMP", "GIF", "TIFF", "ICO"],
   "temp_file_prefix": "yourmirror_",
   "exponential_backoff_base": 5

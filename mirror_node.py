@@ -21,7 +21,26 @@ class YourMirrorVirtualTryOn:
         self.config_file = os.path.join(os.path.dirname(__file__), "config.json")
         self.max_retries = 3
         self.timeout = 60
+        self.user_agent = "ComfyUI-MirrorNode/1.0"
+        self.high_quality_timeout = None  # Optional override for high-quality calls
+        self.download_timeout = 60  # Timeout for downloading result images
         self.log_messages = []  # Store log messages for output
+
+        # Load optional configuration from config.json if present
+        try:
+            if os.path.exists(self.config_file):
+                with open(self.config_file, "r", encoding="utf-8") as f:
+                    cfg = json.load(f)
+                self.api_base_url = cfg.get("api_base_url", self.api_base_url)
+                self.max_retries = cfg.get("max_retries", self.max_retries)
+                self.timeout = cfg.get("timeout", self.timeout)
+                self.user_agent = cfg.get("user_agent", self.user_agent)
+                self.high_quality_timeout = cfg.get("high_quality_timeout", self.high_quality_timeout)
+                self.download_timeout = cfg.get("download_timeout", self.download_timeout)
+                self.log_debug("Loaded configuration from config.json")
+        except Exception as e:
+            # Non-fatal: continue with defaults
+            self.log_error(f"Failed to load config.json: {e}")
         
     def log_debug(self, message: str):
         """Simple debug logging"""
@@ -265,7 +284,7 @@ class YourMirrorVirtualTryOn:
         try:
             headers = {
                 'Content-Type': 'application/json',
-                'User-Agent': 'ComfyUI-MirrorNode/1.0'
+                'User-Agent': self.user_agent,
             }
             
             # Debug: Log the payload structure
@@ -351,12 +370,25 @@ class YourMirrorVirtualTryOn:
                 else:
                     self.log_debug(f"  [{i}]: {type(item).__name__} = {item}")
             
+            # Determine timeout considering quality (high quality typically needs longer)
+            request_timeout = self.timeout
+            try:
+                if isinstance(payload.get('data'), list) and len(payload['data']) >= 5:
+                    quality_value = payload['data'][4]
+                    if isinstance(quality_value, str) and quality_value.lower() == 'high':
+                        # Use explicit high-quality timeout if provided, otherwise ensure at least 180s
+                        request_timeout = self.high_quality_timeout or max(self.timeout, 180)
+                        self.log_debug(f"Adjusted timeout for high quality: {request_timeout}s")
+            except Exception:
+                # If anything goes wrong, fall back to default timeout
+                request_timeout = self.timeout
+
             self.log_info(f"Making API request to: {self.api_base_url}/generate")
             response = requests.post(
                 f"{self.api_base_url}/generate",
                 json=payload,
                 headers=headers,
-                timeout=self.timeout
+                timeout=request_timeout
             )
             
             self.log_info(f"API Response Status: {response.status_code}")
@@ -376,20 +408,13 @@ class YourMirrorVirtualTryOn:
                     return self.make_api_request(payload, retry_count + 1)
                 else:
                     raise Exception("Rate limit exceeded. Please wait before making more requests.")
-            elif response.status_code == 400 and "unsupported file path format" in response.text:
-                # Try with base64 format if we get this specific error
-                self.log_info("Got unsupported file path format error, trying with base64...")
+            elif response.status_code == 400:
+                # Be more permissive on 400s: try base64/data-uri fallbacks automatically
+                self.log_info("HTTP 400 received. Attempting alternate image payload formats...")
                 if retry_count < 3:  # Allow up to 3 retries with different formats
                     return self.make_api_request_with_base64(payload, retry_count + 1)
                 else:
-                    raise Exception("API doesn't support local file paths or any base64 format")
-            elif response.status_code == 400 and "invalid image data format" in response.text:
-                # Try with different base64 format if we get this error
-                self.log_info("Got invalid image data format error, trying different base64 format...")
-                if retry_count < 3:  # Allow up to 3 retries with different formats
-                    return self.make_api_request_with_base64(payload, retry_count + 1)
-                else:
-                    raise Exception("API doesn't accept any of the tried image formats")
+                    raise Exception("API returned 400. Tried alternate image formats without success.")
             else:
                 # Debug: Log the full error response
                 self.log_error(f"API Response Status: {response.status_code}")
@@ -480,7 +505,7 @@ class YourMirrorVirtualTryOn:
         """Download the result image from the provided URL"""
         try:
             self.log_info(f"Downloading result image from: {image_url}")
-            response = requests.get(image_url, timeout=30)
+            response = requests.get(image_url, timeout=self.download_timeout)
             response.raise_for_status()
             image = Image.open(io.BytesIO(response.content))
             self.log_info(f"Downloaded image: {image.size} pixels")
