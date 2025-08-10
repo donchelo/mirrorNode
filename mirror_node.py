@@ -259,15 +259,17 @@ class YourMirrorVirtualTryOn:
             }
 
     def prepare_file_payload_v2(self, file_path: str) -> Dict[str, Any]:
-        """Alternative file payload format for API"""
+        """Alternative file payload format for API - using newer Gradio format"""
         if file_path is None:
             return None
             
-        # Try a different format that might work
+        # Try the newer Gradio file format with base64 data
         base64_data = self.file_to_base64(file_path)
         return {
-            "data": f"data:image/png;base64,{base64_data}",
-            "meta": {"_type": "gradio.FileData"}
+            "path": f"data:image/png;base64,{base64_data}",
+            "meta": {"_type": "gradio.FileData"},
+            "orig_name": os.path.basename(file_path),
+            "size": os.path.getsize(file_path)
         }
 
     def prepare_file_payload_v3(self, file_path: str) -> Dict[str, Any]:
@@ -278,6 +280,19 @@ class YourMirrorVirtualTryOn:
         # Try with just the base64 data as a string
         base64_data = self.file_to_base64(file_path)
         return base64_data
+
+    def prepare_file_payload_v4(self, file_path: str) -> Dict[str, Any]:
+        """Try exact format from API documentation"""
+        if file_path is None:
+            return None
+            
+        # Use base64 data URL in path field (matching API docs format)
+        base64_data = self.file_to_base64(file_path)
+        data_url = f"data:image/png;base64,{base64_data}"
+        return {
+            "path": data_url,
+            "meta": {"_type": "gradio.FileData"}
+        }
 
     def make_api_request(self, payload: Dict[str, Any], retry_count: int = 0) -> Dict[str, Any]:
         """Make API request with retry logic"""
@@ -411,7 +426,7 @@ class YourMirrorVirtualTryOn:
             elif response.status_code == 400:
                 # Be more permissive on 400s: try base64/data-uri fallbacks automatically
                 self.log_info("HTTP 400 received. Attempting alternate image payload formats...")
-                if retry_count < 3:  # Allow up to 3 retries with different formats
+                if retry_count < 4:  # Allow up to 4 retries with different formats
                     return self.make_api_request_with_base64(payload, retry_count + 1)
                 else:
                     raise Exception("API returned 400. Tried alternate image formats without success.")
@@ -454,6 +469,19 @@ class YourMirrorVirtualTryOn:
             
             # Try different payload formats based on retry count
             if retry_count == 1:
+                # Try format v4 (exact API docs format)
+                self.log_info("Trying base64 format v4 (API docs format)...")
+                new_payload = {
+                    "data": [
+                        self.prepare_file_payload_v4(base_path),
+                        self.prepare_file_payload_v4(product_path),
+                        original_payload['data'][2],  # workflow_type
+                        self.prepare_file_payload_v4(mask_path) if mask_path else None,
+                        original_payload['data'][4],  # quality
+                        original_payload['data'][5]   # api_key
+                    ]
+                }
+            elif retry_count == 2:
                 # Try format v2 (with data URI)
                 self.log_info("Trying base64 format v2 (with data URI)...")
                 new_payload = {
@@ -466,7 +494,7 @@ class YourMirrorVirtualTryOn:
                         original_payload['data'][5]   # api_key
                     ]
                 }
-            elif retry_count == 2:
+            elif retry_count == 3:
                 # Try format v3 (just base64 string)
                 self.log_info("Trying base64 format v3 (just base64 string)...")
                 new_payload = {
@@ -557,19 +585,23 @@ class YourMirrorVirtualTryOn:
             if mask_pil:
                 self.log_debug(f"  - Mask image size: {mask_pil.size}")
             
-            # Create data URIs directly (this is what the API expects)
-            self.log_info("Creating data URIs for API...")
-            base_data_uri = self.create_data_uri(base_pil, "PNG")
-            product_data_uri = self.create_data_uri(product_pil, "PNG")
-            mask_data_uri = self.create_data_uri(mask_pil, "PNG") if mask_pil else None
+            # Try different approaches to send images to the API
+            # First, try with temporary files
+            self.log_info("Preparing images for API...")
+            base_temp_file = self.save_temp_image(base_pil, "PNG")
+            product_temp_file = self.save_temp_image(product_pil, "PNG")
+            mask_temp_file = self.save_temp_image(mask_pil, "PNG") if mask_pil else None
+            temp_files.extend([base_temp_file, product_temp_file])
+            if mask_temp_file:
+                temp_files.append(mask_temp_file)
             
-            # Prepare API payload using data URIs
+            # Try the simplest approach first - just the file paths
             payload = {
                 "data": [
-                    {"path": base_data_uri, "meta": {"_type": "gradio.FileData"}},
-                    {"path": product_data_uri, "meta": {"_type": "gradio.FileData"}},
+                    {"path": base_temp_file, "meta": {"_type": "gradio.FileData"}},
+                    {"path": product_temp_file, "meta": {"_type": "gradio.FileData"}},
                     workflow_type,
-                    {"path": mask_data_uri, "meta": {"_type": "gradio.FileData"}} if mask_data_uri else None,
+                    {"path": mask_temp_file, "meta": {"_type": "gradio.FileData"}} if mask_temp_file else None,
                     quality,
                     api_key.strip()
                 ]
